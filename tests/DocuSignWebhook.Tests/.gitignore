@@ -1,0 +1,22 @@
+# Test Results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage.*.xml
+*.cobertura.xml
+
+# Coverage Reports
+coverage-report/
+htmlcov/
+.coverage
+
+# Build results
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates

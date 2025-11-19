@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DocuSignWebhook.Infrastruct
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DocuSignWebhook.API", "src\DocuSignWebhook.API\DocuSignWebhook.API.csproj", "{D4E4F4A4-B4C4-4D8E-CF9A-0B1C2D3E4F5A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DocuSignWebhook.Tests", "tests\DocuSignWebhook.Tests\DocuSignWebhook.Tests.csproj", "{E5F5A5B5-C5D5-4E9F-DA0B-1C2D3E4F5A6B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,5 +35,9 @@ Global
 		{D4E4F4A4-B4C4-4D8E-CF9A-0B1C2D3E4F5A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D4E4F4A4-B4C4-4D8E-CF9A-0B1C2D3E4F5A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D4E4F4A4-B4C4-4D8E-CF9A-0B1C2D3E4F5A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E5F5A5B5-C5D5-4E9F-DA0B-1C2D3E4F5A6B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E5F5A5B5-C5D5-4E9F-DA0B-1C2D3E4F5A6B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E5F5A5B5-C5D5-4E9F-DA0B-1C2D3E4F5A6B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E5F5A5B5-C5D5-4E9F-DA0B-1C2D3E4F5A6B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

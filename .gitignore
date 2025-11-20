@@ -403,3 +403,5 @@ logs/
 appsettings.*.json
 !appsettings.json
 !appsettings.Development.json
+
+.claude

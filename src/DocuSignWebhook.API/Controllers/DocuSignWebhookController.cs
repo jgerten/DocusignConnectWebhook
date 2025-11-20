@@ -217,16 +217,20 @@ public async Task<IActionResult> ReceiveWebhook()
         webhookEvent.ErrorMessage = null;
         await _context.SaveChangesAsync();
 
-        // Trigger processing asynchronously
+        // Trigger processing asynchronously with a new scope
         _ = Task.Run(async () =>
         {
+            using var scope = _serviceScopeFactory.CreateScope();
+            var processor = scope.ServiceProvider.GetRequiredService<IWebhookProcessor>();
+
             try
             {
-                await _webhookProcessor.ProcessWebhookEventAsync(id);
+                await processor.ProcessWebhookEventAsync(id);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error during manual retry of webhook event {WebhookEventId}", id);
+                var logger = scope.ServiceProvider.GetRequiredService<ILogger<DocuSignWebhookController>>();
+                logger.LogError(ex, "Error during manual retry of webhook event {WebhookEventId}", id);
             }
         });
 

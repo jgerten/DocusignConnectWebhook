@@ -3,6 +3,7 @@ using DocuSignWebhook.Application.Interfaces.Services;
 using DocuSignWebhook.Domain.Entities;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
+using System.Text;
 
 namespace DocuSignWebhook.API.Controllers;
 
@@ -16,120 +17,141 @@ public class DocuSignWebhookController : ControllerBase
     private readonly IApplicationDbContext _context;
     private readonly IWebhookProcessor _webhookProcessor;
     private readonly ILogger<DocuSignWebhookController> _logger;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
 
     public DocuSignWebhookController(
         IApplicationDbContext context,
         IWebhookProcessor webhookProcessor,
-        ILogger<DocuSignWebhookController> logger)
+        ILogger<DocuSignWebhookController> logger,
+        IServiceScopeFactory serviceScopeFactory)
     {
         _context = context;
         _webhookProcessor = webhookProcessor;
         _logger = logger;
+        _serviceScopeFactory = serviceScopeFactory;
     }
 
-    /// <summary>
-    /// Receives webhook events from DocuSign Connect
-    /// </summary>
-    /// <param name="payload">Webhook payload from DocuSign</param>
-    /// <returns>200 OK if webhook is accepted</returns>
-    [HttpPost]
-    public async Task<IActionResult> ReceiveWebhook([FromBody] JsonElement payload)
+/// <summary>
+/// Receives webhook events from DocuSign Connect
+/// </summary>
+/// <returns>200 OK if webhook is accepted</returns>
+[HttpPost]
+public async Task<IActionResult> ReceiveWebhook()
+{
+    try
     {
+        string rawPayload;
+        
+        // Read the raw body
+        using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
+        {
+            rawPayload = await reader.ReadToEndAsync();
+        }
+
+        _logger.LogInformation("Received DocuSign webhook: {Payload}", rawPayload);
+
+        // Validate HMAC signature if present
+        if (Request.Headers.TryGetValue("X-DocuSign-Signature-1", out var signature))
+        {
+            if (!_webhookProcessor.ValidateHmacSignature(rawPayload, signature!))
+            {
+                _logger.LogWarning("Invalid HMAC signature for webhook");
+                return Unauthorized("Invalid signature");
+            }
+        }
+
+        // Parse JSON payload (DocuSign Connect REST v2.1 format)
+        string eventType = "unknown";
+        string envelopeId = "unknown";
+        string status = "unknown";
+
         try
         {
-            var rawPayload = payload.GetRawText();
+            var jsonDoc = JsonDocument.Parse(rawPayload);
+            var root = jsonDoc.RootElement;
 
-            _logger.LogInformation("Received DocuSign webhook");
-
-            // Validate HMAC signature if present
-            if (Request.Headers.TryGetValue("X-DocuSign-Signature-1", out var signature))
+            // Get event type
+            if (root.TryGetProperty("event", out var eventProp))
             {
-                if (!_webhookProcessor.ValidateHmacSignature(rawPayload, signature!))
-                {
-                    _logger.LogWarning("Invalid HMAC signature for webhook");
-                    return Unauthorized("Invalid signature");
-                }
+                eventType = eventProp.GetString() ?? "unknown";
             }
 
-            // Extract basic info from payload
-            string eventType = "unknown";
-            string envelopeId = "unknown";
-            string status = "unknown";
-
-            try
+            // Get envelope ID
+            if (root.TryGetProperty("envelopeId", out var envIdProp))
             {
-                if (payload.TryGetProperty("event", out var eventProp))
-                {
-                    eventType = eventProp.GetString() ?? "unknown";
-                }
+                envelopeId = envIdProp.GetString() ?? "unknown";
+            }
 
-                if (payload.TryGetProperty("data", out var data))
+            // Get status from envelopeSummary or root level
+            if (root.TryGetProperty("data", out var dataProp))
+            {
+                if (dataProp.TryGetProperty("envelopeSummary", out var summaryProp))
                 {
-                    if (data.TryGetProperty("envelopeId", out var envId))
+                    if (summaryProp.TryGetProperty("status", out var statusProp))
                     {
-                        envelopeId = envId.GetString() ?? "unknown";
-                    }
-                    if (data.TryGetProperty("envelopeSummary", out var summary))
-                    {
-                        if (summary.TryGetProperty("status", out var statusProp))
-                        {
-                            status = statusProp.GetString() ?? "unknown";
-                        }
+                        status = statusProp.GetString() ?? "unknown";
                     }
                 }
-
-                // Alternative payload structure
-                if (payload.TryGetProperty("envelopeId", out var altEnvId))
+                if (dataProp.TryGetProperty("envelopeId", out var dataEnvId))
                 {
-                    envelopeId = altEnvId.GetString() ?? envelopeId;
-                }
-                if (payload.TryGetProperty("status", out var altStatus))
-                {
-                    status = altStatus.GetString() ?? status;
+                    envelopeId = dataEnvId.GetString() ?? envelopeId;
                 }
             }
-            catch (Exception ex)
+
+            if (root.TryGetProperty("status", out var rootStatusProp))
             {
-                _logger.LogWarning(ex, "Error parsing webhook payload structure");
+                status = rootStatusProp.GetString() ?? status;
             }
 
-            // Create webhook event record
-            var webhookEvent = new WebhookEvent
-            {
-                EventType = eventType,
-                EnvelopeId = envelopeId,
-                Status = status,
-                RawPayload = rawPayload,
-                ProcessingStatus = WebhookProcessingStatus.Pending
-            };
-
-            _context.WebhookEvents.Add(webhookEvent);
-            await _context.SaveChangesAsync();
-
-            _logger.LogInformation("Saved webhook event {WebhookEventId} for envelope {EnvelopeId}",
-                webhookEvent.Id, envelopeId);
-
-            // Process asynchronously (fire and forget - could use background service in production)
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _webhookProcessor.ProcessWebhookEventAsync(webhookEvent.Id);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing webhook event {WebhookEventId}", webhookEvent.Id);
-                }
-            });
-
-            return Ok(new { message = "Webhook received", webhookEventId = webhookEvent.Id });
+            _logger.LogInformation("Event: {EventType}, Envelope: {EnvelopeId}, Status: {Status}", 
+                eventType, envelopeId, status);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling webhook");
-            return StatusCode(500, "Error processing webhook");
+            _logger.LogWarning(ex, "Error parsing JSON payload, will store raw data");
         }
+
+        // Create webhook event record
+        var webhookEvent = new WebhookEvent
+        {
+            EventType = eventType,
+            EnvelopeId = envelopeId,
+            Status = status,
+            RawPayload = rawPayload,
+            ProcessingStatus = WebhookProcessingStatus.Pending
+        };
+
+        _context.WebhookEvents.Add(webhookEvent);
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Saved webhook event {WebhookEventId} for envelope {EnvelopeId}",
+            webhookEvent.Id, envelopeId);
+
+        // Process asynchronously with a new scope
+        _ = Task.Run(async () =>
+        {
+            using var scope = _serviceScopeFactory.CreateScope();
+            var processor = scope.ServiceProvider.GetRequiredService<IWebhookProcessor>();
+
+            try
+            {
+                await processor.ProcessWebhookEventAsync(webhookEvent.Id);
+            }
+            catch (Exception ex)
+            {
+                var logger = scope.ServiceProvider.GetRequiredService<ILogger<DocuSignWebhookController>>();
+                logger.LogError(ex, "Error processing webhook event {WebhookEventId}", webhookEvent.Id);
+            }
+        });
+
+        return Ok();
     }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error handling webhook");
+        return StatusCode(500, "Error processing webhook");
+    }
+}
 
     /// <summary>
     /// Gets webhook event status

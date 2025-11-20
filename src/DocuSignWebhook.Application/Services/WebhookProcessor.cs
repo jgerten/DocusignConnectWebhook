@@ -92,6 +92,11 @@ public class WebhookProcessor : IWebhookProcessor
                     await ProcessEnvelopeCompletionAsync(envelope);
                     webhookEvent.EnvelopeEntityId = envelope.Id;
                 }
+                else if (envelope != null && envelope.DocumentsDownloaded)
+                {
+                    _logger.LogInformation("Envelope {EnvelopeId} documents already downloaded - skipping",
+                        envelope.DocuSignEnvelopeId);
+                }
             }
             else
             {
@@ -100,19 +105,31 @@ public class WebhookProcessor : IWebhookProcessor
                 webhookEvent.ProcessingStatus = WebhookProcessingStatus.Ignored;
             }
 
-            webhookEvent.ProcessingStatus = WebhookProcessingStatus.Completed;
+            // Only mark as completed if not already marked as ignored
+            if (webhookEvent.ProcessingStatus != WebhookProcessingStatus.Ignored)
+            {
+                webhookEvent.ProcessingStatus = WebhookProcessingStatus.Completed;
+            }
+
             webhookEvent.ProcessedAt = DateTime.UtcNow;
+            webhookEvent.ErrorMessage = null; // Clear any previous error messages
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Successfully processed webhook event {WebhookEventId}", webhookEventId);
+            _logger.LogInformation("Successfully processed webhook event {WebhookEventId} (attempt {Attempt})",
+                webhookEventId, webhookEvent.ProcessingAttempts);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing webhook event {WebhookEventId}", webhookEventId);
+            _logger.LogError(ex, "Error processing webhook event {WebhookEventId} (attempt {Attempt})",
+                webhookEventId, webhookEvent.ProcessingAttempts);
+
             webhookEvent.ProcessingStatus = WebhookProcessingStatus.Failed;
-            webhookEvent.ErrorMessage = ex.Message;
+            webhookEvent.ErrorMessage = $"[Attempt {webhookEvent.ProcessingAttempts}] {ex.Message}";
             webhookEvent.ProcessedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
+
+            // Re-throw to allow caller to handle if needed
+            throw;
         }
     }
 

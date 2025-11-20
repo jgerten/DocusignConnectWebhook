@@ -8,6 +8,18 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Configure graceful shutdown for Kubernetes
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.AddServerHeader = false;
+});
+
+// Configure shutdown timeout (should be less than K8s terminationGracePeriodSeconds)
+builder.Host.ConfigureHostOptions(opts =>
+{
+    opts.ShutdownTimeout = TimeSpan.FromSeconds(25); // K8s default is 30s, leave 5s buffer
+});
+
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
@@ -74,6 +86,9 @@ builder.Services.AddScoped<IWebhookProcessor>(provider =>
     var logger = provider.GetRequiredService<ILogger<WebhookProcessor>>();
     return new WebhookProcessor(context, docusign, minio, logger, hmacSecret, defaultBucket);
 });
+
+// Background service for automatic retry of failed webhooks
+builder.Services.AddHostedService<WebhookRetryBackgroundService>();
 
 // CORS (configure as needed)
 builder.Services.AddCors(options =>

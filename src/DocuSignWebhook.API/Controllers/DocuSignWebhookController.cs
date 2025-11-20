@@ -191,4 +191,49 @@ public async Task<IActionResult> ReceiveWebhook()
             service = "DocuSign Webhook API"
         });
     }
+
+    /// <summary>
+    /// Manually retry a failed webhook event
+    /// </summary>
+    /// <param name="id">Webhook event ID to retry</param>
+    [HttpPost("{id}/retry")]
+    public async Task<IActionResult> RetryWebhookEvent(Guid id)
+    {
+        var webhookEvent = await _context.WebhookEvents.FindAsync(id);
+
+        if (webhookEvent == null)
+            return NotFound(new { message = "Webhook event not found" });
+
+        if (webhookEvent.ProcessingStatus == WebhookProcessingStatus.Completed)
+            return BadRequest(new { message = "Webhook event already completed successfully" });
+
+        if (webhookEvent.ProcessingStatus == WebhookProcessingStatus.Processing)
+            return BadRequest(new { message = "Webhook event is currently being processed" });
+
+        _logger.LogInformation("Manual retry triggered for webhook event {WebhookEventId}", id);
+
+        // Reset status to pending
+        webhookEvent.ProcessingStatus = WebhookProcessingStatus.Pending;
+        webhookEvent.ErrorMessage = null;
+        await _context.SaveChangesAsync();
+
+        // Trigger processing asynchronously with a new scope
+        _ = Task.Run(async () =>
+        {
+            using var scope = _serviceScopeFactory.CreateScope();
+            var processor = scope.ServiceProvider.GetRequiredService<IWebhookProcessor>();
+
+            try
+            {
+                await processor.ProcessWebhookEventAsync(id);
+            }
+            catch (Exception ex)
+            {
+                var logger = scope.ServiceProvider.GetRequiredService<ILogger<DocuSignWebhookController>>();
+                logger.LogError(ex, "Error during manual retry of webhook event {WebhookEventId}", id);
+            }
+        });
+
+        return Ok(new { message = "Retry triggered", webhookEventId = id });
+    }
 }
